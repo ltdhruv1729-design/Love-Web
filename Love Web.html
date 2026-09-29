@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>For You ❤️</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: black;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #bgCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        
+        #fgCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 2;
+        }
+
+        #final-text {
+            position: absolute;
+            z-index: 3;
+            color: #ff66b2;
+            font-family: 'Dancing Script', cursive;
+            font-size: 2.5rem;
+            text-shadow: 0 0 10px #ff66b2, 0 0 20px #ff1493;
+            opacity: 0;
+            pointer-events: none;
+            text-align: center;
+            transition: opacity 2s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Pink Matrix Background -->
+    <canvas id="bgCanvas"></canvas>
+    
+    <!-- Foreground Particles (Text and Heart) -->
+    <canvas id="fgCanvas"></canvas>
+
+    <!-- Final Text inside the Heart -->
+    <div id="final-text">I Love ❤️ You<br>Bee</div>
+
+    <script>
+        const bgCanvas = document.getElementById('bgCanvas');
+        const bgCtx = bgCanvas.getContext('2d');
+        const fgCanvas = document.getElementById('fgCanvas');
+        const fgCtx = fgCanvas.getContext('2d', { willReadFrequently: true });
+        
+        const offCanvas = document.createElement('canvas');
+        const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+        let w, h;
+        let particles = [];
+        let animationFrameId;
+        
+        function resizeCanvases() {
+            w = window.innerWidth;
+            h = window.innerHeight;
+            bgCanvas.width = fgCanvas.width = offCanvas.width = w;
+            bgCanvas.height = fgCanvas.height = offCanvas.height = h;
+        }
+        resizeCanvases();
+        window.addEventListener('resize', resizeCanvases);
+
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        // --- BACKGROUND: PINK MATRIX RAIN ---
+        function startBinaryRain() {
+            const chars = '01'.split('');
+            const fontSize = 14;
+            const columns = Math.floor(w / fontSize) + 1;
+            const drops = Array(columns).fill(1);
+
+            setInterval(() => {
+                bgCtx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+                bgCtx.fillRect(0, 0, w, h);
+                bgCtx.fillStyle = '#d11169'; // Dark pink for matrix
+                bgCtx.font = fontSize + 'px monospace';
+
+                for(let i = 0; i < drops.length; i++) {
+                    const text = chars[Math.floor(Math.random() * chars.length)];
+                    bgCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+                    if(drops[i] * fontSize > h && Math.random() > 0.975) drops[i] = 0;
+                    drops[i]++;
+                }
+            }, 35);
+        }
+
+        // --- GET PIXELS FOR TEXT ---
+        function getTextTargets(text) {
+            offCtx.clearRect(0, 0, w, h);
+            offCtx.fillStyle = 'white';
+            
+            // Adjust font size based on screen width
+            let fontSize = w < 600 ? 100 : 180;
+            offCtx.font = `bold ${fontSize}px Arial`;
+            offCtx.textAlign = 'center';
+            offCtx.textBaseline = 'middle';
+            offCtx.fillText(text, w / 2, h / 2);
+            
+            const data = offCtx.getImageData(0, 0, w, h).data;
+            let targets = [];
+            // Skip pixels to make dots sparse but visible
+            for (let y = 0; y < h; y += 5) {
+                for (let x = 0; x < w; x += 5) {
+                    const alpha = data[((w * y) + x) * 4 + 3];
+                    if (alpha > 128) {
+                        targets.push({ x: x, y: y });
+                    }
+                }
+            }
+            return targets;
+        }
+
+        // --- MATH: GET PIXELS FOR HEART OUTLINE ---
+        function getHeartTargets() {
+            let targets = [];
+            let scale = w < 600 ? 12 : 18; // Heart size
+            
+            for (let t = 0; t < Math.PI * 2; t += 0.02) {
+                // Heart parametric equations
+                let x = 16 * Math.pow(Math.sin(t), 3);
+                let y = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+                
+                // Add thickness to the outline by layering particles
+                for(let j=0; j < 3; j++) {
+                    targets.push({
+                        x: w / 2 + (x * scale) + (Math.random() - 0.5) * 15,
+                        y: h / 2 + (y * scale) + (Math.random() - 0.5) * 15 - 20
+                    });
+                }
+            }
+            return targets;
+        }
+
+        // --- PARTICLE SYSTEM ---
+        function updateParticles(targets) {
+            // Match current particles to new targets
+            let newParticles = [];
+            for(let i = 0; i < targets.length; i++) {
+                if (particles[i]) {
+                    // Update target for existing particle
+                    particles[i].tx = targets[i].x;
+                    particles[i].ty = targets[i].y;
+                    newParticles.push(particles[i]);
+                } else {
+                    // Spawn new particle from random edge
+                    newParticles.push({ 
+                        x: Math.random() * w, 
+                        y: Math.random() > 0.5 ? 0 : h, 
+                        tx: targets[i].x, 
+                        ty: targets[i].y 
+                    });
+                }
+            }
+            particles = newParticles;
+        }
+
+        function drawForeground() {
+            fgCtx.clearRect(0, 0, w, h);
+            
+            // Draw particles
+            particles.forEach(p => {
+                // Easing movement (smooth glide to target)
+                p.x += (p.tx - p.x) * 0.08;
+                p.y += (p.ty - p.y) * 0.08;
+                
+                fgCtx.fillStyle = '#ffffff'; // White glowing dots
+                fgCtx.shadowBlur = 5;
+                fgCtx.shadowColor = '#ff66b2';
+                
+                fgCtx.beginPath();
+                fgCtx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+                fgCtx.fill();
+            });
+
+            animationFrameId = requestAnimationFrame(drawForeground);
+        }
+
+        // --- MAIN SEQUENCE (Matches Video Timing) ---
+        async function runSequence() {
+            startBinaryRain();
+            drawForeground(); // Start animation loop
+            
+            const sequence = ["3", "2", "1", "You", "Are", "My", "Love"];
+            
+            for (let i = 0; i < sequence.length; i++) {
+                let targets = getTextTargets(sequence[i]);
+                updateParticles(targets);
+                await sleep(1200); // Wait between words
+            }
+            
+            // Scatter slightly before forming heart
+            updateParticles([]); 
+            await sleep(400);
+
+            // Form Heart Outline
+            let heartTargets = getHeartTargets();
+            updateParticles(heartTargets);
+            
+            // Fade in the final text inside the heart
+            await sleep(1500);
+            document.getElementById('final-text').style.opacity = '1';
+        }
+
+        // Start everything when page loads
+        window.onload = runSequence;
+    </script>
+</body>
+</html>
